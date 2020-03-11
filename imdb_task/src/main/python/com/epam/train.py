@@ -1,3 +1,4 @@
+from collections import Counter
 from pandas import DataFrame
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import CountVectorizer
@@ -7,35 +8,37 @@ import pandas
 import matplotlib
 from sklearn.model_selection import train_test_split
 
+most_common_duplicates_count = 5
+random_state_value = 11
+
+# Data import
 input_file = "../../../resources/IMDB Dataset.csv"
 data = pandas.read_csv(input_file, header = 0)
 original_headers = list(data.columns.values)
 
+
+# Exploratory data analysis
 print(data.head())
-print(data.tail())
 
+## Looking for unique values
 print("\n")
-print(data.describe())
-
-categorical_columns = [c for c in data.columns if data[c].dtype.name == 'object']
-numerical_columns   = [c for c in data.columns if data[c].dtype.name != 'object']
-print(f"\nCategorical columns: {categorical_columns}")
-print(f"Numerical columns: {numerical_columns}")
-
-print("\n")
-for c in categorical_columns:
+for c in original_headers:
     print (f"Unique '{c}' values: {len(data[c].unique())}")
 
-#check for empty values
+## Analyzing the most common duplicates and removing them
+duplicates_counter = Counter(data[data.duplicated()]["review"])
+most_common_duplicates = duplicates_counter.most_common(most_common_duplicates_count)
+for review, count in most_common_duplicates:
+    print('%d : %s \n' % (count + 1, review))
+data = data.drop_duplicates(keep='first')
+
+
+## Check for empty values
+print("\n")
 print(data.count(axis=0))
 
-data_describe = data.describe(include=[object])
-binary_columns    = [c for c in categorical_columns if data_describe[c]['unique'] == 2]
-nonbinary_columns = [c for c in categorical_columns if data_describe[c]['unique'] > 2]
-print(f"\nBinary: {str(binary_columns)}")
-print(f"Non-binary: {str(nonbinary_columns)}")
-
-
+# Vectorization
+## Replace categories with digits
 data.sentiment = data.sentiment.apply(lambda x: 0 if x == "negative" else 1)
 
 print("\n")
@@ -44,33 +47,39 @@ print(data.head())
 vectorizer = CountVectorizer()
 # vectorizer = CountVectorizer(stop_words="english"б, ngram_range=(1,2), min_df=0.1, max_features = 100000)
 
+## Data split for Train-validate-test pipeline. Proportion is 80/20/20
 X = data["review"]
 y = data["sentiment"]
-X_cv, X_test, y_cv, y_test = train_test_split(X, y, test_size = 0.2, random_state = 11, stratify=y)
-X_train, X_validate, y_train, y_validate = train_test_split(X_cv, y_cv, test_size = 0.25, random_state = 11, stratify=y_cv)
+X_cv, X_test, y_cv, y_test = train_test_split(X, y, test_size = 0.2, random_state=random_state_value, stratify=y)
+X_train, X_validate, y_train, y_validate = train_test_split(X_cv, y_cv, test_size = 0.25, random_state = random_state_value, stratify=y_cv)
 
+## Vocabulary creation
 X_train = vectorizer.fit_transform(X_train)
 X_validate = vectorizer.transform(X_validate)
 X_test = vectorizer.transform(X_test)
 
-
-logreg = LogisticRegression(random_state=0, max_iter=10000)
+# Model training
+logreg = LogisticRegression(random_state=random_state_value, max_iter=10000)
 logreg.fit(X_train, y_train)
 
+## Cross-validation on validation dataset
 scores_validation = cross_validate(logreg, X_validate, y_validate, cv = 5, scoring=("f1", "accuracy", "precision", "recall", "roc_auc"))
 print("\n")
 
-print("P: %0.2f (+/- %0.3f)" % (scores_validation["test_precision"].mean(), scores_validation["test_precision"].std() / 2))
-print("R: %0.2f (+/- %0.3f)" % (scores_validation["test_recall"].mean(), scores_validation["test_recall"].std() / 2))
-print("F1: %0.2f (+/- %0.3f)" % (scores_validation["test_f1"].mean(), scores_validation["test_f1"].std() / 2))
-print("A: %0.2f (+/- %0.3f)" % (scores_validation["test_accuracy"].mean(), scores_validation["test_accuracy"].std() / 2))
-print("ROC_AUC: %0.2f (+/- %0.3f)" % (scores_validation["test_roc_auc"].mean(), scores_validation["test_roc_auc"].std() / 2))
+def print_cv_score(source, scoreName, abbr):
+    print(abbr + ": %0.2f (+/- %0.3f)" % (source[scoreName].mean(), source[scoreName].std() / 2))
+
+print_cv_score(scores_validation, "test_precision", "P")
+print_cv_score(scores_validation, "test_recall", "R")
+print_cv_score(scores_validation, "test_f1", "F1")
+print_cv_score(scores_validation, "test_accuracy", "A")
+print_cv_score(scores_validation, "test_roc_auc", "ROC_AUC")
 
 
-scores_test = cross_validate(logreg, X_test, y_test, cv = 5, scoring=("f1", "accuracy", "precision", "recall", "roc_auc"))
+# Testing on the independent test set
+prediction = logreg.predict(X_test)
 print("\n")
 
-prediction = logreg.predict(X_test)
 print("P : %0.3f" % precision_score(prediction, y_test))
 print("R : %0.3f" % recall_score(prediction, y_test))
 print("F1: %0.3f" % f1_score(prediction, y_test))
@@ -86,6 +95,8 @@ print("ROC_AUC %0.3f: " % roc_auc_score(prediction, y_test))
 # analytics['CountVectorizer_val'] = vect_validation
 # analytics['CountVectorizer_test'] = vect_test
 
+
+#Analytics report creation. Comparing algorithms and experiments.
 analytics = {}
 analytics['CountVectorizer_val'] = scores_validation["test_f1"].mean()
 analytics['CountVectorizer_test'] = f1_score(prediction, y_test)
