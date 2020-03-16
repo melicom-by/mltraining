@@ -1,15 +1,19 @@
 from collections import Counter
+import time
+import numpy
 from pandas import DataFrame
 from sklearn.linear_model import LogisticRegression
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score, roc_auc_score
-from sklearn.model_selection import cross_validate
+from sklearn.model_selection import cross_validate, GridSearchCV
 import pandas
 import matplotlib
 from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
 
 most_common_duplicates_count = 5
 random_state_value = 11
+cv_folds = 5
 
 # Data import
 input_file = "../../../resources/IMDB Dataset.csv"
@@ -44,26 +48,56 @@ data.sentiment = data.sentiment.apply(lambda x: 0 if x == "negative" else 1)
 print("\n")
 print(data.head())
 
-vectorizer = CountVectorizer()
-# vectorizer = CountVectorizer(stop_words="english"б, ngram_range=(1,2), min_df=0.1, max_features = 100000)
-
-## Data split for Train-validate-test pipeline. Proportion is 80/20/20
+## Check original classes distribution
 X = data["review"]
 y = data["sentiment"]
+
+def print_classes_distribution(data):
+    clases_counter = Counter(data)
+    for class_name, count in clases_counter.most_common():
+        print(f"Class '{class_name}': {count} (%0.3f)" % (count/len(data)))
+
+print("\nOriginal data:")
+print_classes_distribution(y)
+
+## Data split for Train-validate-test pipeline. Proportion is 80/20/20
 X_cv, X_test, y_cv, y_test = train_test_split(X, y, test_size = 0.2, random_state=random_state_value, stratify=y)
 X_train, X_validate, y_train, y_validate = train_test_split(X_cv, y_cv, test_size = 0.25, random_state = random_state_value, stratify=y_cv)
 
+## Check classes distribution after split
+print("\nTrain:")
+print_classes_distribution(y_train)
+print("\nValidate:")
+print_classes_distribution(y_validate)
+print("\nTest:")
+print_classes_distribution(y_test)
+
 ## Vocabulary creation
+vectorizer = CountVectorizer()
+# vectorizer = CountVectorizer(stop_words="english"б, ngram_range=(1,2), min_df=0.1, max_features = 100000)
+
 X_train = vectorizer.fit_transform(X_train)
 X_validate = vectorizer.transform(X_validate)
+X_cv = vectorizer.fit_transform(X_cv)
 X_test = vectorizer.transform(X_test)
 
 # Model training
+## Hyper parameter optimization
 logreg = LogisticRegression(random_state=random_state_value, max_iter=10000)
-logreg.fit(X_train, y_train)
+parameters = {'C': numpy.logspace(0.01, 10, 20)}
+grid_search_model = GridSearchCV(logreg, parameters, scoring="f1", n_jobs=-1, pre_dispatch="2*n_jobs", cv=cv_folds)
+start_time = time.time()
+grid_search_model.fit(X_train, y_train)
+
+## HPO results analysis
+print("\nHPO done in %0.0fs" % (time.time() - start_time))
+print(f"Best score: {grid_search_model.best_score_}")
+best_parameters = grid_search_model.best_estimator_.get_params()
+for param_name in sorted(parameters.keys()):
+    print("\n%s: %r" % (param_name, best_parameters[param_name]))
 
 ## Cross-validation on validation dataset
-scores_validation = cross_validate(logreg, X_validate, y_validate, cv = 5, scoring=("f1", "accuracy", "precision", "recall", "roc_auc"))
+scores_validation = cross_validate(grid_search_model, X_validate, y_validate, cv = cv_folds, scoring=("f1", "accuracy", "precision", "recall", "roc_auc"))
 print("\n")
 
 def print_cv_score(source, scoreName, abbr):
@@ -75,9 +109,12 @@ print_cv_score(scores_validation, "test_f1", "F1")
 print_cv_score(scores_validation, "test_accuracy", "A")
 print_cv_score(scores_validation, "test_roc_auc", "ROC_AUC")
 
+## Model creation
+model = LogisticRegression(random_state=random_state_value, max_iter=10000, C = best_parameters["C"])
+model.fit(X_cv, y_cv)
 
 # Testing on the independent test set
-prediction = logreg.predict(X_test)
+prediction = model.predict(X_test)
 print("\n")
 
 print("P : %0.3f" % precision_score(prediction, y_test))
